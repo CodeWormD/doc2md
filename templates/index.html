@@ -41,16 +41,18 @@
     border:1px solid var(--line);border-radius:10px;padding:14px;font:13px/1.45 Consolas,monospace;
     white-space:pre;overflow:auto;
   }
-  .btns{display:flex;gap:12px;margin-top:14px;flex-wrap:wrap}
-  #direct{margin-top:12px;color:var(--muted);font-size:13px}
-  #direct a{color:var(--accent)}
-  button{
+  .btns{display:flex;gap:12px;margin-top:14px;flex-wrap:wrap;align-items:center}
+  button, a.btn{
     border:1px solid var(--line);border-radius:9px;padding:10px 20px;font:inherit;cursor:pointer;
     background:var(--panel2);color:var(--text);transition:.15s;
   }
-  button:hover{border-color:var(--accent)}
-  button.primary{background:var(--accent);border-color:var(--accent);color:#0b1220;font-weight:600}
-  button.primary:hover{filter:brightness(1.1)}
+  button:hover, a.btn:hover{border-color:var(--accent)}
+  button.primary, a.btn.primary{
+    background:var(--accent);border-color:var(--accent);color:#0b1220;font-weight:600;
+    display:inline-flex;align-items:center;gap:8px;text-decoration:none;
+  }
+  button.primary:hover, a.btn.primary:hover{filter:brightness(1.1)}
+  #saveFile{margin-top:12px;color:var(--muted);font-size:13px}
   #toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);background:var(--ok);color:#06210f;
     padding:10px 22px;border-radius:10px;font-weight:600;opacity:0;pointer-events:none;transition:.3s}
   #toast.show{opacity:1}
@@ -84,11 +86,11 @@
       <div id="warnings" hidden></div>
       <textarea id="out" readonly spellcheck="false"></textarea>
       <div class="btns">
-        <button id="saveBtn" class="primary">💾 Сохранить как…</button>
+        <a id="saveLink" class="btn primary" href="#">💾 Прямая ссылка для скачивания</a>
         <button id="copyBtn">Копировать</button>
         <button id="againBtn">Другой файл</button>
       </div>
-      <p id="direct" hidden>Кнопка не сработала? Прямая ссылка: <a id="directHref" href="#"></a></p>
+      <p id="saveFile" hidden>Файл: <b id="saveFileName"></b> — откроется по ссылке и сохранится в «Загрузки».</p>
     </div>
   </section>
 
@@ -177,47 +179,16 @@ function render(j, file){
     w.textContent = "⚠ " + j.warnings.join("\n⚠ ");
     w.hidden = false;
   } else w.hidden = true;
-  const dl = $("directHref");
-  dl.textContent = j.download_name;
-  dl.href = j.download_url;
-  dl.setAttribute("download", j.download_name);
-  $("direct").hidden = false;
+  $("saveLink").href = j.download_url;
+  $("saveLink").setAttribute("download", j.download_name);
+  $("saveFileName").textContent = j.download_name;
+  $("saveFile").hidden = false;
   $("result").hidden = false;
 }
 
-/* --- сохранение --- */
-$("saveBtn").onclick = async () => {
-  if(!current) return;
-  // 1) настоящий диалог «Сохранить как» (Chrome/Edge на обычной вкладке)
-  if(window.showSaveFilePicker){
-    try{
-      const h = await window.showSaveFilePicker({
-        suggestedName: current.downloadName,
-        types: [{description:"Markdown", accept:{"text/markdown":[".md"]}}]
-      });
-      const ws = await h.createWritable();
-      await ws.write(new Blob([current.markdown], {type:"text/markdown;charset=utf-8"}));
-      await ws.close();
-      toast("Сохранено: " + h.name);
-      return;
-    }catch(e){
-      if(e && e.name === "AbortError") return; // диалог отменили — это не ошибка
-      /* встроенный браузер или запрет API — уходим на скачивание */
-    }
-  }
-  // 2) обычное скачивание средствами браузера (в папку «Загрузки»)
-  saveViaServer();
-};
-
-function saveViaServer(){
-  const a = document.createElement("a");
-  a.href = current.downloadUrl;
-  a.download = current.downloadName;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  toast("Файл сохраняется в «Загрузки»: " + current.downloadName);
-}
+/* --- сохранение: обычная ссылка <a download>, работает и во встроенных браузерах ---
+   (кнопка с File System Access API убрана: в webview она недоступна,
+   а программные клики по сгенерированным ссылкам там проглатываются) */
 
 $("copyBtn").onclick = async () => {
   if(!current) return;

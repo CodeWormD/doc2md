@@ -2,7 +2,8 @@
 """E2E-проверка интерфейса DOC2MD в headless Chromium (dev-скрипт, нужен `pip install playwright`).
 
 Проверяет: drag&drop на зону, drag&drop мимо зоны, выбор файла кликом,
-сообщение об ошибке для неподдерживаемого формата, визуальный отклик при переносе.
+сообщение об ошибке для неподдерживаемого формата, визуальный отклик при
+переносе, скачивание по прямой ссылке (в т.ч. с кириллическим именем).
 """
 import io
 import pathlib
@@ -87,35 +88,26 @@ def main() -> int:
         assert page.text_content("#dropTitle") == "Перетащите файл сюда", "подсказка не сбросилась"
         print("E) Отклик при переносе    OK")
 
-        # --- F: «Сохранить как» в браузере без File System Access API (webview)
+        # --- F: ссылка «Прямая ссылка для скачивания» — настоящий клик (работает и в webview)
         page.evaluate("document.getElementById('result').hidden = true")
         drop(page, "#drop", "save-test.csv", "save;me\n7;8\n")
         page.wait_for_selector("#result:not([hidden])", timeout=20000)
-        assert "/download/" in page.get_attribute("#directHref", "href"), "прямая ссылка не проставлена"
-        page.evaluate("window.showSaveFilePicker = undefined")  # имитация встроенного браузера
+        assert "/download/" in page.get_attribute("#saveLink", "href"), "ссылка не проставлена"
+        assert page.get_attribute("#saveLink", "download") == "save-test.md", "download-атрибут не проставлен"
+        assert page.text_content("#saveFileName") == "save-test.md", "имя файла не показано"
         with page.expect_download() as di:
-            page.click("#saveBtn")
+            page.click("#saveLink")
         dl = di.value
         assert dl.suggested_filename == "save-test.md", dl.suggested_filename
         saved = pathlib.Path(dl.path()).read_text(encoding="utf-8")
         assert "| save | me |" in saved and "| 7 | 8 |" in saved, "тело файла не совпало: " + saved[:120]
-        print("F) Сохранение (webview)   OK")
+        print("F) Ссылка для скачивания  OK")
 
-        # --- G: API есть, но выбросило ошибку — фолбэк на скачивание
-        page.evaluate("""() => {
-            window.showSaveFilePicker =
-                () => Promise.reject(new DOMException("denied", "NotAllowedError"));
-        }""")
-        with page.expect_download() as di:
-            page.click("#saveBtn")
-        assert di.value.suggested_filename == "save-test.md"
-        print("G) Фолбэк при отказе API  OK")
-
-        # --- H: /download с несуществующим id -> 404
+        # --- G: /download с несуществующим id -> 404
         resp = page.request.get(BASE + "/download/nonexistent")
         assert resp.status == 404, resp.status
         assert "устарел" in resp.json().get("error", ""), resp.text()
-        print("H) 404 устаревшей ссылки  OK")
+        print("G) 404 устаревшей ссылки  OK")
 
         browser.close()
         if js_errors:
