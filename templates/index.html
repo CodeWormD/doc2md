@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DOC2MD — конвертер в Markdown</title>
+<style>
+  :root{
+    --bg:#0f1420; --panel:#171e2e; --panel2:#1d2740; --line:#2a3653;
+    --text:#e8edf7; --muted:#93a1bd; --accent:#5b9dff; --ok:#4cc38a; --warn:#e6b455; --err:#ef6a6a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 "Segoe UI",system-ui,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:32px 20px 60px}
+  header h1{margin:0;font-size:26px;letter-spacing:.5px}
+  header p{margin:6px 0 0;color:var(--muted)}
+  #drop{
+    margin-top:24px;border:2px dashed var(--line);border-radius:14px;background:var(--panel);
+    padding:46px 24px;text-align:center;cursor:pointer;transition:.15s;
+  }
+  #drop.hover{border-color:var(--accent);background:var(--panel2)}
+  #drop b{font-size:17px}
+  #drop small{display:block;margin-top:8px;color:var(--muted)}
+  .opts{display:flex;gap:22px;flex-wrap:wrap;margin-top:14px;color:var(--muted);font-size:14px}
+  .opts label{cursor:pointer;user-select:none}
+  .opts input{vertical-align:-2px;margin-right:6px}
+  #status{margin-top:18px;color:var(--muted)}
+  .spin{display:inline-block;width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--accent);
+    border-radius:50%;animation:r .8s linear infinite;vertical-align:-2px;margin-right:8px}
+  @keyframes r{to{transform:rotate(360deg)}}
+  #error{margin-top:18px;padding:12px 16px;border:1px solid var(--err);border-radius:10px;color:var(--err);
+    background:rgba(239,106,106,.08);white-space:pre-wrap}
+  #result{margin-top:26px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  #stats{display:flex;gap:30px;flex-wrap:wrap}
+  #stats b{font-size:16px;word-break:break-all}
+  #stats span{color:var(--muted);font-size:12.5px}
+  #warnings{margin-top:10px;color:var(--warn);font-size:13.5px;white-space:pre-wrap}
+  #out{
+    margin-top:12px;width:100%;height:46vh;resize:vertical;background:var(--panel2);color:var(--text);
+    border:1px solid var(--line);border-radius:10px;padding:14px;font:13px/1.45 Consolas,monospace;
+    white-space:pre;overflow:auto;
+  }
+  .btns{display:flex;gap:12px;margin-top:14px;flex-wrap:wrap}
+  button{
+    border:1px solid var(--line);border-radius:9px;padding:10px 20px;font:inherit;cursor:pointer;
+    background:var(--panel2);color:var(--text);transition:.15s;
+  }
+  button:hover{border-color:var(--accent)}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#0b1220;font-weight:600}
+  button.primary:hover{filter:brightness(1.1)}
+  #toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);background:var(--ok);color:#06210f;
+    padding:10px 22px;border-radius:10px;font-weight:600;opacity:0;pointer-events:none;transition:.3s}
+  #toast.show{opacity:1}
+  footer{margin-top:40px;color:var(--muted);font-size:12.5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>📄 DOC2MD</h1>
+    <p>Excel · Word · PDF → Markdown, оптимизированный для чтения LLM. Всё локально — файлы никуда не отправляются.</p>
+  </header>
+
+  <div id="drop">
+    <b>Перетащите файл сюда</b> или нажмите, чтобы выбрать
+    <small>.xlsx .xlsm .xls .csv .docx .doc .pdf — до 200 МБ</small>
+  </div>
+  <input id="file" type="file" hidden accept=".xlsx,.xlsm,.xls,.csv,.docx,.doc,.pdf">
+
+  <div class="opts">
+    <label><input type="checkbox" id="stripHeaders" checked> Убирать колонтитулы и номера страниц (PDF)</label>
+    <label><input type="checkbox" id="pageMarkers"> Отмечать страницы PDF (&lt;!-- стр. N --&gt;)</label>
+  </div>
+
+  <div id="status" hidden><span class="spin"></span><span id="statusText">Конвертация…</span></div>
+  <div id="error" hidden></div>
+
+  <section id="result" hidden>
+    <div class="card">
+      <div id="stats"></div>
+      <div id="warnings" hidden></div>
+      <textarea id="out" readonly spellcheck="false"></textarea>
+      <div class="btns">
+        <button id="saveBtn" class="primary">💾 Сохранить как…</button>
+        <button id="copyBtn">Копировать</button>
+        <button id="againBtn">Другой файл</button>
+      </div>
+    </div>
+  </section>
+
+  <footer>Оценка токенов — приблизительная (символы ÷ 3.5). Файлы конвертируются во временную папку и удаляются сразу после отправки результата.</footer>
+</div>
+<div id="toast"></div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const drop = $("drop"), fileInput = $("file");
+let current = null; // {markdown, downloadName}
+
+/* --- выбор файла --- */
+drop.onclick = () => fileInput.click();
+fileInput.onchange = () => fileInput.files[0] && upload(fileInput.files[0]);
+
+["dragover","dragenter"].forEach(ev => drop.addEventListener(ev, e => {
+  e.preventDefault(); drop.classList.add("hover");
+}));
+["dragleave","drop"].forEach(ev => drop.addEventListener(ev, e => {
+  e.preventDefault(); drop.classList.remove("hover");
+}));
+drop.addEventListener("drop", e => e.dataTransfer.files[0] && upload(e.dataTransfer.files[0]));
+window.addEventListener("dragover", e => e.preventDefault());
+window.addEventListener("drop", e => e.preventDefault());
+
+/* --- конвертация --- */
+async function upload(file){
+  hide($("#error")); hide($("#result"));
+  setStatus("Конвертация «" + file.name + "»…");
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("strip_headers", $("stripHeaders").checked);
+  fd.append("page_markers", $("pageMarkers").checked);
+  try{
+    const r = await fetch("convert", {method:"POST", body:fd});
+    const j = await r.json().catch(() => ({}));
+    if(!r.ok){ fail(j.error || ("Ошибка " + r.status)); return; }
+    current = {markdown: j.markdown, downloadName: j.download_name};
+    render(j, file);
+  }catch(err){
+    fail("Сервер недоступен: " + err);
+  }
+}
+
+function render(j, file){
+  clearStatus();
+  const s = j.stats;
+  $("out").value = j.markdown;
+  const stats = $("stats");
+  stats.textContent = "";
+  stats.append(
+    stat(file.name + " (" + fmtSize(file.size) + ")", "источник"),
+    stat(fmtNum(s.chars), "символов"),
+    stat(fmtNum(s.words), "слов"),
+    stat("≈ " + fmtNum(s.tokens_est), "токенов (оценка)"),
+    stat(s.seconds + " с", "конвертация")
+  );
+  const w = $("warnings");
+  if(j.warnings && j.warnings.length){
+    w.textContent = "⚠ " + j.warnings.join("\n⚠ ");
+    w.hidden = false;
+  } else w.hidden = true;
+  $("result").hidden = false;
+}
+
+/* --- сохранение --- */
+$("saveBtn").onclick = async () => {
+  if(!current) return;
+  const blob = new Blob([current.markdown], {type:"text/markdown;charset=utf-8"});
+  if(window.showSaveFilePicker){
+    try{
+      const h = await showSaveFilePicker({
+        suggestedName: current.downloadName,
+        types: [{description:"Markdown", accept:{"text/markdown":[".md"]}}]
+      });
+      const ws = await h.createWritable();
+      await ws.write(blob);
+      await ws.close();
+      toast("Сохранено: " + h.name);
+      return;
+    }catch(e){
+      if(e && e.name === "AbortError") return; // пользователь отменил диалог
+      /* иначе — резервный путь ниже */
+    }
+  }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = current.downloadName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  toast("Файл сохранён в загрузки: " + current.downloadName);
+};
+
+$("copyBtn").onclick = async () => {
+  if(!current) return;
+  try{
+    await navigator.clipboard.writeText(current.markdown);
+    toast("Скопировано в буфер обмена");
+  }catch(e){
+    $("out").select();
+    document.execCommand("copy");
+    toast("Скопировано");
+  }
+};
+
+$("againBtn").onclick = () => {
+  hide($("#result"));
+  fileInput.value = "";
+  drop.scrollIntoView({behavior:"smooth"});
+  drop.classList.add("hover");
+  setTimeout(() => drop.classList.remove("hover"), 600);
+};
+
+/* --- вспомогательные --- */
+function fail(msg){ clearStatus(); const e = $("#error"); e.textContent = msg; e.hidden = false; }
+function setStatus(text){ $("statusText").textContent = text; $("status").hidden = false; }
+function clearStatus(){ $("status").hidden = true; }
+function hide(el){ el.hidden = true; }
+function stat(text, label){
+  const d = document.createElement("div");
+  const b = document.createElement("b"); b.textContent = text;
+  const s = document.createElement("span"); s.textContent = label;
+  d.append(b, document.createElement("br"), s);
+  return d;
+}
+function toast(msg){
+  const t = $("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(t._h);
+  t._h = setTimeout(() => t.classList.remove("show"), 2600);
+}
+const fmtNum = n => n.toLocaleString("ru-RU");
+const fmtSize = b => b < 1024 ? b + " Б"
+  : b < 1048576 ? (b/1024).toFixed(1) + " КБ"
+  : (b/1048576).toFixed(1) + " МБ";
+</script>
+</body>
+</html>
