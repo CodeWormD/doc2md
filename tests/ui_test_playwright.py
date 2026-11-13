@@ -87,6 +87,36 @@ def main() -> int:
         assert page.text_content("#dropTitle") == "Перетащите файл сюда", "подсказка не сбросилась"
         print("E) Отклик при переносе    OK")
 
+        # --- F: «Сохранить как» в браузере без File System Access API (webview)
+        page.evaluate("document.getElementById('result').hidden = true")
+        drop(page, "#drop", "save-test.csv", "save;me\n7;8\n")
+        page.wait_for_selector("#result:not([hidden])", timeout=20000)
+        assert "/download/" in page.get_attribute("#directHref", "href"), "прямая ссылка не проставлена"
+        page.evaluate("window.showSaveFilePicker = undefined")  # имитация встроенного браузера
+        with page.expect_download() as di:
+            page.click("#saveBtn")
+        dl = di.value
+        assert dl.suggested_filename == "save-test.md", dl.suggested_filename
+        saved = pathlib.Path(dl.path()).read_text(encoding="utf-8")
+        assert "| save | me |" in saved and "| 7 | 8 |" in saved, "тело файла не совпало: " + saved[:120]
+        print("F) Сохранение (webview)   OK")
+
+        # --- G: API есть, но выбросило ошибку — фолбэк на скачивание
+        page.evaluate("""() => {
+            window.showSaveFilePicker =
+                () => Promise.reject(new DOMException("denied", "NotAllowedError"));
+        }""")
+        with page.expect_download() as di:
+            page.click("#saveBtn")
+        assert di.value.suggested_filename == "save-test.md"
+        print("G) Фолбэк при отказе API  OK")
+
+        # --- H: /download с несуществующим id -> 404
+        resp = page.request.get(BASE + "/download/nonexistent")
+        assert resp.status == 404, resp.status
+        assert "устарел" in resp.json().get("error", ""), resp.text()
+        print("H) 404 устаревшей ссылки  OK")
+
         browser.close()
         if js_errors:
             print("JS-ОШИБКИ НА СТРАНИЦЕ:", js_errors)

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """DOC2MD — локальный веб-сервис конвертации документов в Markdown."""
 import os
+import secrets
 import socket
 import sys
 import tempfile
@@ -23,6 +24,22 @@ if hasattr(sys.stdout, "reconfigure"):
         pass
 
 TMP_DIR = tempfile.mkdtemp(prefix="doc2md_")
+
+# результаты последней конвертации — для скачивания кнопкой «Сохранить как»
+RESULTS: dict[str, dict] = {}
+RESULT_TTL = 3600  # секунд
+RESULT_MAX = 50
+
+
+def _store_result(markdown: str, download_name: str) -> str:
+    now = time.time()
+    for k in [k for k, v in RESULTS.items() if now - v["ts"] > RESULT_TTL]:
+        RESULTS.pop(k, None)
+    rid = secrets.token_urlsafe(8)
+    RESULTS[rid] = {"markdown": markdown, "download_name": download_name, "ts": now}
+    while len(RESULTS) > RESULT_MAX:
+        RESULTS.pop(next(iter(RESULTS)))
+    return rid
 
 
 @app.get("/")
@@ -69,6 +86,7 @@ def convert():
             stats=stats,
             download_name=os.path.splitext(name)[0] + ".md",
             source_name=name,
+            download_url=f"/download/{_store_result(md, os.path.splitext(name)[0] + '.md')}",
         )
     except ConvertError as exc:
         return jsonify(error=str(exc)), 422
@@ -80,6 +98,23 @@ def convert():
             os.remove(tmp_path)
         except OSError:
             pass
+
+
+@app.get("/download/<rid>")
+def download(rid: str):
+    item = RESULTS.get(rid)
+    if item is None:
+        return jsonify(error="Результат не найден или устарел — сконвертируйте файл заново."), 404
+    resp = app.response_class(item["markdown"].encode("utf-8"), mimetype="text/markdown")
+    # RFC 6266: ASCII-fallback + filename* с процентным кодированием (кириллица и т.п.)
+    from urllib.parse import quote
+    safe = "".join(ch if ord(ch) < 128 and ch not in '"\\' else "_" for ch in item["download_name"]) or "doc2md.md"
+    resp.headers.set(
+        "Content-Disposition",
+        "attachment",
+        **{"filename": safe, "filename*": f"UTF-8''{quote(item['download_name'])}"},
+    )
+    return resp
 
 
 @app.errorhandler(413)

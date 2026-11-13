@@ -42,6 +42,8 @@
     white-space:pre;overflow:auto;
   }
   .btns{display:flex;gap:12px;margin-top:14px;flex-wrap:wrap}
+  #direct{margin-top:12px;color:var(--muted);font-size:13px}
+  #direct a{color:var(--accent)}
   button{
     border:1px solid var(--line);border-radius:9px;padding:10px 20px;font:inherit;cursor:pointer;
     background:var(--panel2);color:var(--text);transition:.15s;
@@ -86,6 +88,7 @@
         <button id="copyBtn">Копировать</button>
         <button id="againBtn">Другой файл</button>
       </div>
+      <p id="direct" hidden>Кнопка не сработала? Прямая ссылка: <a id="directHref" href="#"></a></p>
     </div>
   </section>
 
@@ -149,7 +152,7 @@ async function upload(file){
     const r = await fetch("convert", {method:"POST", body:fd});
     const j = await r.json().catch(() => ({}));
     if(!r.ok){ fail(j.error || ("Ошибка " + r.status)); return; }
-    current = {markdown: j.markdown, downloadName: j.download_name};
+    current = {markdown: j.markdown, downloadName: j.download_name, downloadUrl: j.download_url};
     render(j, file);
   }catch(err){
     fail("Сервер недоступен: " + err);
@@ -174,38 +177,47 @@ function render(j, file){
     w.textContent = "⚠ " + j.warnings.join("\n⚠ ");
     w.hidden = false;
   } else w.hidden = true;
+  const dl = $("directHref");
+  dl.textContent = j.download_name;
+  dl.href = j.download_url;
+  dl.setAttribute("download", j.download_name);
+  $("direct").hidden = false;
   $("result").hidden = false;
 }
 
 /* --- сохранение --- */
 $("saveBtn").onclick = async () => {
   if(!current) return;
-  const blob = new Blob([current.markdown], {type:"text/markdown;charset=utf-8"});
+  // 1) настоящий диалог «Сохранить как» (Chrome/Edge на обычной вкладке)
   if(window.showSaveFilePicker){
     try{
-      const h = await showSaveFilePicker({
+      const h = await window.showSaveFilePicker({
         suggestedName: current.downloadName,
         types: [{description:"Markdown", accept:{"text/markdown":[".md"]}}]
       });
       const ws = await h.createWritable();
-      await ws.write(blob);
+      await ws.write(new Blob([current.markdown], {type:"text/markdown;charset=utf-8"}));
       await ws.close();
       toast("Сохранено: " + h.name);
       return;
     }catch(e){
-      if(e && e.name === "AbortError") return; // пользователь отменил диалог
-      /* иначе — резервный путь ниже */
+      if(e && e.name === "AbortError") return; // диалог отменили — это не ошибка
+      /* встроенный браузер или запрет API — уходим на скачивание */
     }
   }
+  // 2) обычное скачивание средствами браузера (в папку «Загрузки»)
+  saveViaServer();
+};
+
+function saveViaServer(){
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
+  a.href = current.downloadUrl;
   a.download = current.downloadName;
   document.body.appendChild(a);
   a.click();
   a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-  toast("Файл сохранён в загрузки: " + current.downloadName);
-};
+  toast("Файл сохраняется в «Загрузки»: " + current.downloadName);
+}
 
 $("copyBtn").onclick = async () => {
   if(!current) return;
