@@ -63,7 +63,7 @@
   </header>
 
   <div id="drop">
-    <b>Перетащите файл сюда</b> или нажмите, чтобы выбрать
+    <b id="dropTitle">Перетащите файл сюда</b> или нажмите, чтобы выбрать
     <small>.xlsx .xlsm .xls .csv .docx .doc .pdf — до 200 МБ</small>
   </div>
   <input id="file" type="file" hidden accept=".xlsx,.xlsm,.xls,.csv,.docx,.doc,.pdf">
@@ -103,19 +103,43 @@ let current = null; // {markdown, downloadName}
 drop.onclick = () => fileInput.click();
 fileInput.onchange = () => fileInput.files[0] && upload(fileInput.files[0]);
 
-["dragover","dragenter"].forEach(ev => drop.addEventListener(ev, e => {
-  e.preventDefault(); drop.classList.add("hover");
-}));
-["dragleave","drop"].forEach(ev => drop.addEventListener(ev, e => {
-  e.preventDefault(); drop.classList.remove("hover");
-}));
-drop.addEventListener("drop", e => e.dataTransfer.files[0] && upload(e.dataTransfer.files[0]));
-window.addEventListener("dragover", e => e.preventDefault());
-window.addEventListener("drop", e => e.preventDefault());
+/* --- drag & drop по всей странице --- */
+let dragDepth = 0;
+const hasFiles = e => !!(e.dataTransfer && [...(e.dataTransfer.types || [])].includes("Files"));
+const dropTitle = $("dropTitle");
+
+document.addEventListener("dragenter", e => {
+  if(!hasFiles(e)) return;
+  dragDepth++;
+  drop.classList.add("hover");
+  dropTitle.textContent = "Отпустите файл здесь";
+});
+document.addEventListener("dragleave", e => {
+  if(!hasFiles(e)) return;
+  dragDepth = Math.max(0, dragDepth - 1);
+  if(!dragDepth){
+    drop.classList.remove("hover");
+    dropTitle.textContent = "Перетащите файл сюда";
+  }
+});
+document.addEventListener("dragover", e => {
+  if(hasFiles(e)) e.preventDefault(); // без этого drop не сработает
+});
+document.addEventListener("drop", e => {
+  if(!hasFiles(e)) return;
+  e.preventDefault();
+  dragDepth = 0;
+  drop.classList.remove("hover");
+  dropTitle.textContent = "Перетащите файл сюда";
+  const files = e.dataTransfer.files;
+  if(!files.length){ toast("Не удалось получить файл — возможно, перетащена папка."); return; }
+  if(files.length > 1) toast("Конвертирую первый файл из " + files.length + ".");
+  upload(files[0]);
+});
 
 /* --- конвертация --- */
 async function upload(file){
-  hide($("#error")); hide($("#result"));
+  hide($("error")); hide($("result"));
   setStatus("Конвертация «" + file.name + "»…");
   const fd = new FormData();
   fd.append("file", file);
@@ -196,7 +220,7 @@ $("copyBtn").onclick = async () => {
 };
 
 $("againBtn").onclick = () => {
-  hide($("#result"));
+  hide($("result"));
   fileInput.value = "";
   drop.scrollIntoView({behavior:"smooth"});
   drop.classList.add("hover");
@@ -204,7 +228,7 @@ $("againBtn").onclick = () => {
 };
 
 /* --- вспомогательные --- */
-function fail(msg){ clearStatus(); const e = $("#error"); e.textContent = msg; e.hidden = false; }
+function fail(msg){ clearStatus(); const e = $("error"); e.textContent = msg; e.hidden = false; }
 function setStatus(text){ $("statusText").textContent = text; $("status").hidden = false; }
 function clearStatus(){ $("status").hidden = true; }
 function hide(el){ el.hidden = true; }
